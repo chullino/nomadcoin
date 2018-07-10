@@ -115,5 +115,6 @@ const addBlockToChain = newBlock => {
 
 module.exports = {
     getBlockchain,
-    createNewBlock
+    createNewBlock,
+    getLastBlock
 }

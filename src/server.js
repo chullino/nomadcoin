@@ -12,7 +12,6 @@ const { startP2PServer, connectToPeers} = P2P
 const PORT = process.env.HTTP_PORT || 3000;
 const app = express();
 
-
 app.use(bodyParser.json())
 app.use(morgan("combined"))
 app.get("/blocks", (req, res) => {
