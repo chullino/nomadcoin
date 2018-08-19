@@ -1,13 +1,20 @@
 const WebSockets = require("ws")
 const Blockchain = require("./blockchain")
-const {replaceChain, getNewestBlock, isBlockStructureValid, addBlockToChain, getBlockchain } = Blockchain
+const Mempool = require("./memPool")
 
+const {replaceChain, getNewestBlockFromBlockChain, isBlockStructureValid, addBlockToChain, getBlockchain,handleIncomingTransaction } = Blockchain
+const { getMempool } = Mempool
 const sockets = []
 
 //Message Types
 const GET_LATEST = "GET_LATEST"
 const GET_ALL = "GET_ALL"
 const BLOCKCHAIN_RESPONSE = "BLOCKCHAIN_RESPONSE"
+
+const REQUEST_MEMPOOL = "REQUEST_MEMPOOL"
+const MEMPOOL_RESPONSE = "MEMPOOL_RESPONSE"
+
+
 
 //Message Creators
 const getLatest = () => {
@@ -24,6 +31,20 @@ const getAll = () => {
     }
 }
 
+const getAllMempool = () => {
+   return {
+     type: REQUEST_MEMPOOL,
+     data: null
+   };
+ };
+
+ const mempoolResponse = data => {
+   return {
+     type: MEMPOOL_RESPONSE,
+     data
+   };
+ };
+
 const blockchainResponse = data => {
     return { 
         type: BLOCKCHAIN_RESPONSE,
@@ -31,21 +52,32 @@ const blockchainResponse = data => {
     }
 }
 
-const getSocket = () => sockets;
+const getSockets = () => sockets;
 
 const startP2PServer = server => {
     const wsServer = new WebSockets.Server({server})
     wsServer.on("connection", ws => {
         initSocketConnection(ws)
     })
+    wsServer.on("error", () => {
+        console.log(error);
+    });
     console.log('Nomadcoin P2P Server Running!')
 }
 
 const initSocketConnection = ws => {
-    getSocket().push(ws)
+    getSockets().push(ws)
     handleSocketMessages(ws)
     handleSocketError(ws)
     sendMessage(ws, getLatest())
+    setTimeout(() => {
+    	sendMessageToAll(getAllMempool())
+    }, 1000)
+    setInterval(() => {
+        if (sockets.includes(ws)) {
+            sendMessage(ws, "");
+        }
+   }, 1000)
 }
 
 const parseData = data => {
@@ -79,7 +111,26 @@ const handleSocketMessages = ws => {
                     break
                 }
                 handleBlockchainResponse(receivedBlocks)
-	    }
+
+	        case REQUEST_MEMPOOL:
+	            sendMessage(ws, returnMempool());
+	            break
+
+            case MEMPOOL_RESPONSE:
+                const receivedTransactions = message.data;
+                if (receivedTransactions === null) {
+                    return;
+                    }
+                receivedTransactions.forEach(transaction => {
+                    try {
+                            handleIncomingTransaction(transaction)
+                broadcastMempool();
+                    } catch (e) {
+                            console.log(e);
+                        }
+		        });
+	            break;
+        }
     })
 }
 
@@ -91,11 +142,12 @@ const handleBlockchainResponse = receivedBlocks => {
 
     const latestBlockReceived =receivedBlocks[receivedBlocks.length-1]
     if(!isBlockStructureValid(latestBlockReceived)){
+        console.log(latestBlockReceived)
         console.log("The block structure of the block received is not valid")
         return
     }
 
-    const newestBlock = getNewestBlock()
+    const newestBlock = getNewestBlockFromBlockChain()
     if(latestBlockReceived.index > newestBlock.index){
         if(newestBlock.hash === latestBlockReceived.previousHash){
             if(addBlockToChain(latestBlockReceived)){
@@ -115,18 +167,24 @@ const broadcastNewBlock = () => {
     sendMessageToAll(responseLatest())
 }
 
+const returnMempool = () => mempoolResponse(getAllMempool());
+
 const sendMessage = (ws, message) => ws.send(JSON.stringify(message))
 
-const sendMessageToAll = message => sockets.forEach(socket => sendMessage(socket, message))
+const sendMessageToAll = message => {
+    console.log("sending ready")
+    sockets.forEach(socket => sendMessage(socket, message))
+}
 
-const responseLatest = () => blockchainResponse([getNewestBlock()])
+const responseLatest = () => blockchainResponse([getNewestBlockFromBlockChain()])
 
 const responseAll = () => blockchainResponse(getBlockchain())
+const broadcastMempool = () => sendMessageToAll(returnMempool())
 
 const handleSocketError = ws => {
     const closeSocketConnection = ws =>{
         ws.close()
-	getSocket().splice(getSocket().indexOf(ws), 1)
+	getSockets().splice(getSockets().indexOf(ws), 1)
     }
     ws.on("close", () => closeSocketConnection(ws))
     ws.on("error", () => closeSocketConnection(ws))
@@ -137,10 +195,13 @@ const connectToPeers = newPeer => {
     ws.on("open",() => {
         initSocketConnection(ws)
     })
+    ws.on("error", () => console.log("Connection failed"));
+    ws.on("close", () => console.log("Connection failed"));
 }
 
 module.exports = {
     startP2PServer,
     connectToPeers,
-    broadcastNewBlock
+    broadcastNewBlock,
+    broadcastMempool
 }
